@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>AeroDTA — Aerospace Damage Tolerance Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&family=Cabinet+Grotesk:wght@700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+<div id="intro">
+  <canvas id="intro-canvas"></canvas>
+  <div id="intro-loading"><div class="intro-spinner"></div><div class="intro-loading-txt">Building scene</div></div>
+  <div class="intro-brand" id="introBrand">
+    <div class="intro-brand-name">Aero<span>DTA</span></div>
+    <div class="intro-brand-sub">Aerospace Damage Tolerance Assessment</div>
+  </div>
+  <button class="intro-skip" id="introSkip" onclick="skipIntro()">Skip ›</button>
+</div>
+<div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-lbl">Running simulation</div></div>
+<div id="app">
+  <header>
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+        <path d="M3 13 Q13 9 23 13 Q13 17 3 13Z" fill="var(--accent)" opacity=".15"/>
+        <path d="M3 13 Q13 9 23 13" stroke="var(--accent)" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+        <path d="M9 13 L4 20 L13 17Z" stroke="var(--accent)" stroke-width="1" fill="var(--accent)" fill-opacity=".15"/>
+        <circle cx="23" cy="13" r="1.2" fill="var(--accent)"/>
+      </svg>
+      <div class="logo-name">Aero<span>DTA</span></div>
+    </div>
+    <div class="header-right">
+      <span class="header-tag">Paris Law · LEFM · R=0.1</span>
+      <div class="toggle-wrap">
+        <span class="toggle-icon">☀</span>
+        <button class="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme"></button>
+        <span class="toggle-icon">☾</span>
+      </div>
+    </div>
+  </header>
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="hero-kicker">Aerospace Damage Tolerance Assessment</div>
+      <h1>Fatigue Crack Growth<br><span class="hi">Prediction Tool</span></h1>
+      <p class="hero-desc">Simulate crack propagation in aircraft fuselage aluminium alloys using Paris Law and LEFM. Rivet hole geometry, scatter factor, inspection intervals, and sensitivity analysis included.</p>
+    </div>
+  </div>
+  <div class="mode-tabs">
+    <div class="mode-tab active" id="tab-single"  onclick="setMode('single')">Single Material</div>
+    <div class="mode-tab"        id="tab-compare" onclick="setMode('compare')">Compare Materials</div>
+    <div class="mode-tab"        id="tab-sens"    onclick="setMode('sens')">Sensitivity Analysis</div>
+    <div class="mode-tab"        id="tab-validation" onclick="setMode('validation')">Model Validation</div>
+    <div class="mode-tab"        id="tab-mc"      onclick="setMode('mc')">Monte Carlo</div>
+  </div>
+  <div class="page">
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="card" id="mat-card">
+        <div class="card-head"><div class="hl"><span class="card-num">01</span><span class="card-title">Select Material</span></div></div>
+        <div class="card-body">
+          <div class="mat-row">
+            <div class="mat-btn active" data-mat="2024-T3" onclick="selectMat(this)">
+              <div class="mat-top"><span class="mat-name">2024-T3</span><div class="mat-dot"></div></div>
+              <div class="mat-desc">Fuselage skin alloy</div>
+              <div class="mat-const">C=1.44e-10 · m=2.60</div>
+              <div class="mat-const">K_IC=36.5 MPa√m · σ_y=332 MPa</div>
+            </div>
+            <div class="mat-btn" data-mat="7075-T6" onclick="selectMat(this)">
+              <div class="mat-top"><span class="mat-name">7075-T6</span><div class="mat-dot"></div></div>
+              <div class="mat-desc">High-strength structural</div>
+              <div class="mat-const">C=5.27e-10 · m=2.947</div>
+              <div class="mat-const">K_IC=29.1 MPa√m · σ_y=469 MPa</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="hl"><span class="card-num" id="param-num">02</span><span class="card-title">Parameters</span></div></div>
+        <div class="card-body">
+          <div class="field">
+            <div class="field-row"><span class="field-lbl">Applied Stress σ_max</span><span class="field-unit">MPa</span></div>
+            <input type="number" id="stress" value="120" min="1" max="600" step="1"/>
+            <div class="field-hint">80–150: Normal · 151–250: High load (joints)</div>
+          </div>
+          <div class="field">
+            <div class="field-row"><span class="field-lbl">Initial Crack Length a₀</span><span class="field-unit">meters</span></div>
+            <input type="number" id="crack" value="0.001" min="0.0001" max="0.1" step="0.0001"/>
+            <div class="field-hint">Rivet hole = 2.45 mm · Min detectable ≈ 1 mm</div>
+          </div>
+          <div class="field">
+            <div class="field-row"><span class="field-lbl">Flights per Day</span><span class="field-unit">cycles/day</span></div>
+            <input type="number" id="flights" value="4" min="1" max="50" step="1"/>
+            <div class="field-hint">Short-haul: 6–8 · Long-haul: 2–4</div>
+          </div>
+          <button class="btn-run" id="runBtn" onclick="runSim()">Assess Fatigue Life</button>
+          <div class="error-msg" id="errorMsg"></div>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="placeholder" id="placeholder">
+        <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+          <rect x="1" y="1" width="50" height="50" rx="7" stroke="var(--border)" stroke-width="1.5"/>
+          <path d="M9 38 Q18 16 26 24 Q34 32 43 10" stroke="var(--border)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          <circle cx="43" cy="10" r="2.2" fill="var(--border)"/>
+        </svg>
+        <span class="placeholder-txt">Configure parameters and run simulation</span>
+      </div>
+      <div id="results-single" style="display:none;flex-direction:column;gap:14px;">
+        <div id="yieldWarnEl" style="display:none;" class="yield-warn reveal"></div>
+        <div id="stressCatEl" style="display:none;margin-bottom:4px;"></div>
+        <div class="metrics reveal" id="metricsGrid"></div>
+        <div class="info-grid reveal" id="infoGrid"></div>
+        <div class="status-bar reveal" id="statusBar"></div>
+        <div class="chart-card reveal">
+          <div class="chart-head">
+            <span class="chart-title">Crack Growth Curve</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="mat-pill" id="matPill">—</span>
+              <button class="btn-export" onclick="exportSingleCSV()">↓ CSV</button>
+              <button class="btn-export" onclick="exportPDFReport('single', this)">↓ PDF Report</button>
+            </div>
+          </div>
+          <div class="chart-wrap"><canvas id="crackChart"></canvas></div>
+        </div>
+        <div class="insight-card reveal"><div class="insight-title">Engineering Insights</div><div id="insightList"></div></div>
+        <div class="eq-card reveal">
+          <div class="eq-trigger" onclick="toggleEq('eqPanels','eqCaret')">
+            <span class="eq-trigger-lbl">Model Equations</span><span class="eq-caret" id="eqCaret">▼</span>
+          </div>
+          <div class="eq-panels" id="eqPanels">
+            <div class="eq-box">
+              <div class="eq-box-lbl">Geometry Factor (Rivet Hole)</div>
+              <div class="eq-formula">Y(a) = 0.5(3−s)[1+1.243(1−s)³]</div>
+              <div class="eq-var"><span class="eq-sym">s</span><span class="eq-def">= a/(r+a), r=2.45mm</span></div>
+              <div class="eq-var"><span class="eq-sym">Y→3.36</span><span class="eq-def">at a→0 (hole edge)</span></div>
+            </div>
+            <div class="eq-box">
+              <div class="eq-box-lbl">Paris Law Growth</div>
+              <div class="eq-formula">da/dN = C·(ΔK)ᵐ</div>
+              <div class="eq-var"><span class="eq-sym">ΔK</span><span class="eq-def">= Y(a)·Δσ·√(π·a)</span></div>
+              <div class="eq-var"><span class="eq-sym">Δσ</span><span class="eq-def">= σ_max·(1−R), R=0.1</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="results-compare" style="display:none;flex-direction:column;gap:14px;">
+        <div class="chart-card reveal">
+          <div class="chart-head">
+            <span class="chart-title">Crack Growth — Both Materials</span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn-export" onclick="exportCompareCSV()">↓ CSV</button>
+              <button class="btn-export" onclick="exportPDFReport('compare', this)">↓ PDF Report</button>
+            </div>
+          </div>
+          <div class="chart-wrap"><canvas id="compareChart"></canvas></div>
+        </div>
+        <div class="card reveal">
+          <div class="card-head"><div class="hl"><span class="card-title">Side-by-Side Results</span></div></div>
+          <div class="card-body" style="padding:0;"><table class="compare-table" id="compareTable"></table></div>
+        </div>
+        <div class="insight-card reveal"><div class="insight-title">Engineering Insights</div><div id="compareInsightList"></div></div>
+      </div>
+      <div id="results-sens" style="display:none;flex-direction:column;gap:14px;">
+        <div class="chart-card reveal">
+          <div class="chart-head">
+            <span class="chart-title">Stress vs Fatigue Life</span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn-export" onclick="exportSensCSV()">↓ CSV</button>
+              <button class="btn-export" onclick="exportPDFReport('sens', this)">↓ PDF Report</button>
+            </div>
+          </div>
+          <div class="chart-wrap"><canvas id="sensChart"></canvas></div>
+        </div>
+        <div class="card reveal">
+          <div class="card-head">
+            <div class="hl"><span class="card-title">Sensitivity Results</span></div>
+            <div class="sub-tabs">
+              <div class="sub-tab active" onclick="showSensTab('2024-T3',this)">2024-T3</div>
+              <div class="sub-tab"        onclick="showSensTab('7075-T6',this)">7075-T6</div>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <div id="sensTable2024"></div>
+            <div id="sensTable7075" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="insight-card reveal"><div class="insight-title">Engineering Insights</div><div id="sensInsightList"></div></div>
+      </div>
+      <div id="results-validation" style="display:none;flex-direction:column;gap:14px;">
+        <div class="chart-card reveal">
+          <div class="chart-head">
+            <span class="chart-title">da/dN vs ΔK — Model vs NASA Experimental Data</span>
+            <button class="btn-export" onclick="exportPDFReport('validation', this)">↓ PDF Report</button>
+          </div>
+          <div class="chart-wrap"><canvas id="validationChart"></canvas></div>
+        </div>
+        <div class="insight-card reveal"><div class="insight-title">Validation Summary</div><div id="validationSummary"></div></div>
+      </div>
+      <div id="results-mc" style="display:none;flex-direction:column;gap:14px;">
+        <div class="chart-card reveal">
+          <div class="chart-head">
+            <span class="chart-title">Monte Carlo — Distribution of Fatigue Life </span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn-export" onclick="exportMCCSV()">↓ CSV</button>
+              <button class="btn-export" onclick="exportPDFReport('mc', this)">↓ PDF Report</button>
+            </div>
+          </div>
+          <div class="chart-wrap" style="height:300px;"><canvas id="mcChart"></canvas></div>
+        </div>
+        <div class="metrics reveal" id="mcMetrics"></div>
+        <div class="insight-card reveal"><div class="insight-title">Interpretation</div><div id="mcInsight"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="/static/intro.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
