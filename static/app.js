@@ -21,6 +21,32 @@ function syncChart(c){
   c.update();
 }
 
+// Format a value as 10ⁿ notation for log axes.
+function logLabel(value){
+  const exp = Math.log10(value);
+  if(Math.abs(exp - Math.round(exp)) > 0.001) return null;
+  const digits = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  const n = Math.round(exp);
+  const sign = n < 0 ? '⁻' : '';
+  const expStr = String(Math.abs(n)).split('').map(d => digits[+d]).join('');
+  return '10' + sign + expStr;
+}
+
+// Extract a numeric value from whatever Chart.js passes to a tick callback.
+function extractTickNumber(value){
+  if(value === null || value === undefined) return NaN;
+  if(typeof value === 'number') return value;
+  if(typeof value === 'string'){
+    const n = Number(value.replace(/,/g,''));
+    return isFinite(n) ? n : NaN;
+  }
+  if(typeof value === 'object'){
+    if(value.value !== undefined) return extractTickNumber(value.value);
+    if(value.x !== undefined)     return extractTickNumber(value.x);
+  }
+  return NaN;
+}
+
 // ══ STATE ══
 let mode='single', selMat='2024-T3';
 let chartInst=null, compareChartInst=null, sensChartInst=null, validationChartInst=null, mcChartInst=null;
@@ -152,10 +178,13 @@ function baseOpts(color,xLabel,yLabel,xFmt,ttFmt){
     scales:{
       x:{
         ticks:{
-          color:tv('--chart-tick'),font:{family:"'IBM Plex Mono'",size:10},maxTicksLimit:6,
-          callback:function(value,index){
-            const label=this.getLabelForValue(value);
-            return xFmt?xFmt(label):label;
+          color:tv('--chart-tick'),
+          font:{family:"'IBM Plex Mono'",size:10},
+          maxTicksLimit:6,
+          callback:function(value){
+            const n = extractTickNumber(value);
+            if(!isFinite(n)) return '';
+            return xFmt ? xFmt(n) : String(n);
           }
         },
         grid:{color:tv('--chart-grid')},
@@ -170,17 +199,17 @@ function baseOpts(color,xLabel,yLabel,xFmt,ttFmt){
   };
 }
 
-// ══ ANIMATE CRACK GROWTH (multi-dataset) ══
+// ══ ANIMATE CRACK GROWTH ══
 function animateCrack(chart, datasetArrays){
-  // datasetArrays: array of arrays, one per chart dataset
-  const saved = datasetArrays.map(arr => [...arr]);
-  const totals = saved.map(arr => arr.length);
-  const maxLen = Math.max(...totals);
+  const saved = datasetArrays.map(arr => arr.slice());
+  const maxLen = Math.max(...saved.map(arr => arr.length));
   if(maxLen < 2) return;
 
-  // Blank out all datasets
   chart.data.datasets.forEach((ds, i) => {
-    ds.data = new Array(saved[i].length).fill(null);
+    ds.data = saved[i].map(pt => {
+      if (pt && typeof pt === 'object') return { x: pt.x, y: null };
+      return null;
+    });
   });
   chart.update('none');
 
@@ -282,16 +311,19 @@ function renderSingle(data){
   const ctx=document.getElementById('crackChart').getContext('2d');
   const grad=ctx.createLinearGradient(0,0,0,260);
   grad.addColorStop(0,color+'28'); grad.addColorStop(1,color+'00');
+  const pointsSingle = data.cycle_list.map((n,i)=>({x:n, y:data.crack_list[i]}));
   const opts=baseOpts(color,
     'Number of Cycles  N','Crack Length  a (mm)',
-    v=>fmt(Number(v)),
-    {title:c=>`Cycle ${fmt(Number(c[0].label))}`,label:c=>` Crack: ${Number(c.raw).toFixed(3)} mm`}
+    v=>fmt(v),
+    {title:c=>`Cycle ${fmt(extractTickNumber(c[0].parsed.x))}`,label:c=>` Crack: ${Number(c[0].parsed.y).toFixed(3)} mm`}
   );
+  opts.scales.x.type='linear';
+  opts.scales.x.min=0;
   chartInst=new Chart(ctx,{type:'line',data:{
-    labels:data.cycle_list,
-    datasets:[{label:data.material,data:data.crack_list,borderColor:color,borderWidth:2,pointRadius:0,tension:0.35,fill:true,backgroundColor:grad}]
+    datasets:[{label:data.material,data:pointsSingle,borderColor:color,borderWidth:2,pointRadius:0,tension:0.35,fill:true,backgroundColor:grad}]
   },options:opts});
-    animateCrack(chartInst, [data.crack_list]);
+  animateCrack(chartInst, [pointsSingle]);
+
   const m_val = data.material_key==='2024-T3'?2.60:2.947;
   document.getElementById('insightList').innerHTML=[
     `At σ_max = ${data.stress_max} MPa, effective stress range Δσ = ${data.delta_sigma} MPa (R=0.1 applied). The rivet hole geometry factor Y = ${data.Y_initial} at a₀ = ${data.initial_crack_mm} mm concentrates local stress — significantly higher than the far-field value of Y=1.12. Crack must grow ${data.initial_crack_mm} → ${data.critical_length_mm} mm before fracture.`,
@@ -310,23 +342,24 @@ function renderCompare(data){
   const mats=Object.keys(data);
   const d0=data[mats[0]], d1=data[mats[1]];
 
-  const xLabels=d0.cycle_list.length>=d1.cycle_list.length?d0.cycle_list:d1.cycle_list;
+  const datasets = mats.map(mat=>{
+    const d=data[mat],col=COLORS[mat];
+    const pts = d.cycle_list.map((n,i)=>({x:n, y:d.crack_list[i]}));
+    return{label:d.material,data:pts,borderColor:col,borderWidth:2,pointRadius:0,tension:0.35,fill:false};
+  });
 
   if(compareChartInst) compareChartInst.destroy();
   const ctx=document.getElementById('compareChart').getContext('2d');
   const opts=baseOpts(null,
     'Number of Cycles  N','Crack Length  a (mm)',
-    v=>fmt(Number(v)),
-    {title:c=>`Cycle ${fmt(Number(c[0].label))}`,label:c=>` ${c.dataset.label}: ${Number(c.raw).toFixed(3)} mm`}
+    v=>fmt(v),
+    {title:c=>`Cycle ${fmt(extractTickNumber(c[0].parsed.x))}`,label:c=>` ${c.dataset.label}: ${Number(c[0].parsed.y).toFixed(3)} mm`}
   );
-  compareChartInst=new Chart(ctx,{type:'line',data:{
-    labels:xLabels,
-    datasets:mats.map(mat=>{
-      const d=data[mat],col=COLORS[mat];
-      return{label:d.material,data:d.crack_list,borderColor:col,borderWidth:2,pointRadius:0,tension:0.35,fill:false};
-    })
-  },options:opts});
-  animateCrack(compareChartInst, mats.map(mat => data[mat].crack_list));
+  opts.scales.x.type='linear';
+  opts.scales.x.min=0;
+  compareChartInst=new Chart(ctx,{type:'line',data:{datasets},options:opts});
+  animateCrack(compareChartInst, datasets.map(d=>d.data));
+
   const w=(a,b,hi=true)=>hi?(a>b?0:1):(a<b?0:1);
   const rows=[
     ['Total Cycles',       fmt(d0.cycles),                  fmt(d1.cycles),               w(d0.cycles,d1.cycles)],
@@ -384,7 +417,7 @@ function renderSensitivity(data){
         pointRadius:4,pointHoverRadius:6,fill:false,tension:0.3};
     })
   },options:opts});
-  
+
   ['2024-T3','7075-T6'].forEach(mat=>{
     const rows=data[mat]||[];
     const elId=mat==='2024-T3'?'sensTable2024':'sensTable7075';
@@ -476,8 +509,21 @@ function renderValidation(data){
       },
       y:{
         type:'logarithmic',min:1e-7,max:1e-5,
-        ticks:{color:tv('--chart-tick'),font:{family:"'IBM Plex Mono'",size:10}},
-        grid:{color:tv('--chart-grid')},
+        ticks:{
+          color:tv('--chart-tick'),
+          font:{family:"'IBM Plex Mono'",size:10},
+          callback: logLabel
+        },
+        grid:{
+          color: (ctx) => {
+            const v = ctx.tick && ctx.tick.value;
+            if(v){
+              const exp = Math.log10(v);
+              if(Math.abs(exp - Math.round(exp)) > 0.001) return 'transparent';
+            }
+            return tv('--chart-grid');
+          }
+        },
         title:{display:true,text:'da/dN (m/cycle)',color:tv('--chart-tick'),font:{family:"'IBM Plex Mono'",size:10},padding:{bottom:8}}
       }
     }
@@ -529,7 +575,9 @@ function renderMonteCarlo(data){
           color:tv('--chart-tick'),font:{family:"'IBM Plex Mono'",size:10},maxTicksLimit:8,
           callback:function(value){
             const label=this.getLabelForValue(value);
-            return fmt(Number(label));
+            const n = extractTickNumber(label);
+            if(!isFinite(n)) return '';
+            return fmt(n);
           }
         },
         grid:{color:tv('--chart-grid')},
@@ -579,7 +627,7 @@ function renderMonteCarlo(data){
   ].map(t=>`<div class="insight-item"><span class="insight-bullet">→</span><span>${t}</span></div>`).join('');
 }
 
-// ══ PDF REPORT EXPORT (works for all tabs) ══
+// ══ PDF REPORT EXPORT ══
 async function exportPDFReport(tabId, btnEl){
   const panels = {
     single:     { el: 'results-single',     title: 'Fatigue Life Assessment Report',          file: 'Single' },
@@ -605,7 +653,6 @@ async function exportPDFReport(tabId, btnEl){
   const hiddenBtns = panel.querySelectorAll('.btn-export');
   hiddenBtns.forEach(b => b.style.visibility = 'hidden');
 
-  // Force light theme during capture so html2canvas reads real colours
   const originalTheme = document.documentElement.getAttribute('data-theme');
   document.documentElement.setAttribute('data-theme', 'light');
   await new Promise(r => setTimeout(r, 150));
@@ -640,7 +687,6 @@ async function exportPDFReport(tabId, btnEl){
 
   hiddenBtns.forEach(b => b.style.visibility = '');
 
-  // Restore original theme after capture
   if(originalTheme){
     document.documentElement.setAttribute('data-theme', originalTheme);
   } else {
